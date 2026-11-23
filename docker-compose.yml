@@ -1,0 +1,98 @@
+name: orderflow
+
+x-rabbitmq-client: &rabbitmq-client
+  RabbitMQ__Host: rabbitmq
+  RabbitMQ__Port: 5672
+  RabbitMQ__UserName: ${RABBITMQ_USER:-orderflow}
+  RabbitMQ__Password: ${RABBITMQ_PASSWORD:-orderflow_local_only}
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: orderflow_orders
+      POSTGRES_USER: orderflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orderflow_local_only}
+    volumes:
+      - orderflow-data:/var/lib/postgresql
+      - ./backend/database/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - ./backend/database/orders.sql:/orderflow/orders.sql:ro
+      - ./backend/database/inventory.sql:/orderflow/inventory.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U orderflow -d orderflow_inventory"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4.2-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-orderflow}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-orderflow_local_only}
+    ports:
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  orders-api:
+    build:
+      context: ./backend
+      dockerfile: src/Orders.Api/Dockerfile
+    environment:
+      <<: *rabbitmq-client
+      ConnectionStrings__Orders: Host=postgres;Port=5432;Database=orderflow_orders;Username=orderflow;Password=${POSTGRES_PASSWORD:-orderflow_local_only}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  inventory-worker:
+    build:
+      context: ./backend
+      dockerfile: src/Inventory.Worker/Dockerfile
+    environment:
+      <<: *rabbitmq-client
+      ConnectionStrings__Inventory: Host=postgres;Port=5432;Database=orderflow_inventory;Username=orderflow;Password=${POSTGRES_PASSWORD:-orderflow_local_only}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8088:80"
+    depends_on:
+      orders-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend-tests:
+    profiles: ["test"]
+    build:
+      context: ./backend
+      dockerfile: tests/OrderFlow.Tests/Dockerfile
+    environment:
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  orderflow-data:

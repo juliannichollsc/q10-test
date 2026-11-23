@@ -1,0 +1,50 @@
+@baseUrl = http://localhost:8080
+
+### List catalog products
+GET {{baseUrl}}/products
+
+### List orders
+GET {{baseUrl}}/orders
+
+### Create an order that is confirmed
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{
+  "customerName": "Ada Lovelace",
+  "sku": "ABC-01",
+  "quantity": 2
+}
+
+### Create an order that is rejected for insufficient stock
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{
+  "customerName": "Grace Hopper",
+  "sku": "ABC-03",
+  "quantity": 50
+}
+
+### Invalid fields return 400 with field errors
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{
+  "customerName": " ",
+  "sku": "ABC-01",
+  "quantity": 101
+}
+
+### Unknown SKU returns 400 with a sku error
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{
+  "customerName": "Ada Lovelace",
+  "sku": "XYZ-99",
+  "quantity": 1
+}
+
+### Unknown order returns 404
+GET {{baseUrl}}/orders/00000000-0000-0000-0000-000000000001

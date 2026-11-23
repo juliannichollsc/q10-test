@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orderflow-inventory-worker
+data:
+  DOTNET_ENVIRONMENT: Production
+  RabbitMQ__Host: rabbitmq
+  RabbitMQ__Port: "5672"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-worker
+  template:
+    metadata:
+      labels:
+        app: inventory-worker
+    spec:
+      containers:
+        - name: inventory-worker
+          image: orderflow/inventory-worker:1.0.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: orderflow-inventory-worker
+          env:
+            - name: ConnectionStrings__Inventory
+              valueFrom:
+                secretKeyRef:
+                  name: orderflow-runtime
+                  key: inventory-connection-string
+            - name: RabbitMQ__UserName
+              valueFrom:
+                secretKeyRef:
+                  name: orderflow-runtime
+                  key: rabbitmq-username
+            - name: RabbitMQ__Password
+              valueFrom:
+                secretKeyRef:
+                  name: orderflow-runtime
+                  key: rabbitmq-password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
