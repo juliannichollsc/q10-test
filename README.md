@@ -42,7 +42,26 @@ The seeded stock is `ABC-01` = 100, `ABC-02` = 75 and `ABC-03` = 5. In the panel
 3. Submit an empty form, a quantity of 101, or the SKU `XYZ-99`. Each error shows under its field.
 4. Run `docker compose stop inventory-worker`, create an order (it stays **Pending**), then `docker compose start inventory-worker`. It confirms without reloading the page.
 
-The API is at `http://localhost:8080` (`/orders`, `/products`, `/openapi/v1.json`). The RabbitMQ management UI is at `http://localhost:15672` (`orderflow` / `orderflow_local_only`). The Kubernetes manifests for both services, with probes and resource limits, are in `k8s/`.
+The API is at `http://localhost:8080` (`/orders`, `/products`, `/openapi/v1.json`). The RabbitMQ management UI is at `http://localhost:15672` (`orderflow` / `orderflow_local_only`).
+
+### Trade-offs I accepted
+
+- **At-least-once, not exactly-once.** A crash right after publishing can send an event again. The inbox makes that harmless, so I chose that over chasing exactly-once delivery.
+- **PostgreSQL, one container with two databases.** The outbox and the inbox only work with real transactions, and the data has to survive restarts. Each service owns its own database. Sharing one container keeps the local setup light; in production they would be separate instances.
+- **The SKU catalog lives in both databases.** That lets the API reject an unknown SKU right away with a `400`, as the spec asks. The cost is that the seed is duplicated.
+- **No timeout for `Pending`.** If an event never reaches Inventory, the order stays `Pending` until it does. I'd rather show that honestly than invent a business rule.
+- **Retries are unbounded** for transient errors. That's fine for a demo; in production I'd cap them.
+
+### Kubernetes
+
+`k8s/` has a Deployment and a ConfigMap for each backend service, with resource limits. The API also has a Service and `/healthz` and `/livez` probes. To deploy the whole system I would:
+
+1. Publish the three images with a version tag.
+2. Use managed PostgreSQL and RabbitMQ, and run `backend/database/*.sql` once as a Job.
+3. Create the `orderflow-runtime` Secret with the connection strings and RabbitMQ credentials, then `kubectl apply -f k8s/`.
+4. Expose the frontend behind an Ingress, with `/api` routed to the API and WebSockets enabled.
+
+The worker scales horizontally as it is. The API needs a SignalR backplane (Redis) before it can run more than one replica.
 
 ### What I'd do with more time
 
@@ -93,7 +112,26 @@ El stock inicial es `ABC-01` = 100, `ABC-02` = 75 y `ABC-03` = 5. En el panel:
 3. Envía el formulario vacío, una cantidad de 101 o el SKU `XYZ-99`. Cada error aparece debajo de su campo.
 4. Ejecuta `docker compose stop inventory-worker`, crea un pedido (se queda en **Pending**) y luego `docker compose start inventory-worker`. Se confirma sin recargar la página.
 
-La API está en `http://localhost:8080` (`/orders`, `/products`, `/openapi/v1.json`). La consola de RabbitMQ está en `http://localhost:15672` (`orderflow` / `orderflow_local_only`). Los manifiestos de Kubernetes de ambos servicios, con probes y límites de recursos, están en `k8s/`.
+La API está en `http://localhost:8080` (`/orders`, `/products`, `/openapi/v1.json`). La consola de RabbitMQ está en `http://localhost:15672` (`orderflow` / `orderflow_local_only`).
+
+### Trade-offs que asumí
+
+- **At-least-once, no exactly-once.** Si algo se cae justo después de publicar, un evento puede volver a enviarse. El inbox hace que eso no tenga efecto, y preferí eso a perseguir una entrega exactly-once.
+- **PostgreSQL, un contenedor con dos bases de datos.** El outbox y el inbox solo funcionan con transacciones reales, y los datos tienen que sobrevivir a un reinicio. Cada servicio es dueño de su base. Compartir el contenedor mantiene ligero el entorno local; en producción serían instancias separadas.
+- **El catálogo de SKUs está en las dos bases.** Así la API rechaza un SKU inexistente al momento con un `400`, como pide el enunciado. El costo es que el seed está duplicado.
+- **Sin timeout para `Pending`.** Si un evento nunca llega a Inventory, el pedido se queda en `Pending` hasta que llegue. Prefiero mostrarlo con honestidad que inventar una regla de negocio.
+- **Reintentos sin límite** ante errores transitorios. Para una demo está bien; en producción les pondría un tope.
+
+### Kubernetes
+
+En `k8s/` hay un Deployment y un ConfigMap para cada servicio de backend, con límites de recursos. La API además tiene un Service y probes en `/healthz` y `/livez`. Para desplegar el sistema completo:
+
+1. Publicaría las tres imágenes con un tag de versión.
+2. Usaría PostgreSQL y RabbitMQ gestionados, y correría `backend/database/*.sql` una vez como Job.
+3. Crearía el Secret `orderflow-runtime` con las cadenas de conexión y las credenciales de RabbitMQ, y luego `kubectl apply -f k8s/`.
+4. Expondría el frontend detrás de un Ingress, con `/api` hacia la API y WebSockets habilitados.
+
+El worker escala horizontalmente tal como está. La API necesita un backplane de SignalR (Redis) antes de poder correr más de una réplica.
 
 ### Qué haría con más tiempo
 
